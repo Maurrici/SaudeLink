@@ -2,17 +2,32 @@ import pandas as pd
 from datetime import timedelta
 import ast
 
-df = pd.read_csv("raw/20230120-data-collector-dailyRegister.csv", parse_dates=["Day"])
+def safe_parse(x):
+    if isinstance(x, str):
+        try:
+            return ast.literal_eval(x.replace(";", ","))
+        except Exception:
+            return []
+    elif isinstance(x, list):
+        return x
+    else:
+        return []
+
+df = pd.read_csv("data/raw/20230120-data-collector-dailyRegister.csv", parse_dates=["Day"])
 
 df.rename(columns={"Day": "date", "ID": "patient_id"}, inplace=True)
 
 sleep_cols = ["LightSleep", "DeepSleep", "REMSleep", "AwakeSleep"]
 for col in sleep_cols:
-    df[col] = df[col] / 3600
+    df[col] = pd.to_numeric(df[col], errors="coerce") / 3600
 
 df["TotalSleep"] = df["LightSleep"] + df["DeepSleep"] + df["REMSleep"] + df["AwakeSleep"]
 
-df["HeartRate"] = df["HeartRate"].apply(lambda x: ast.literal_eval(x) if pd.notnull(x) else [])
+df["HeartRate"] = df["HeartRate"].apply(safe_parse)
+
+df["Steps"] = pd.to_numeric(df["Steps"], errors="coerce")
+
+df["Calories"] = pd.to_numeric(df["Steps"], errors="coerce")
 
 def gerar_descricao(grupo):
     id = grupo["patient_id"].iloc[0]
@@ -20,20 +35,32 @@ def gerar_descricao(grupo):
     data_final = grupo["date"].max().date()
 
     def stats(col):
+        serie = grupo[col].dropna()
+        valores_validos = serie[serie != 0]
+
+        if valores_validos.empty:
+            return {"disponivel": False}
+
         return {
-            "média": grupo[col].mean(),
-            "mínimo": grupo[col].min(),
-            "máximo": grupo[col].max(),
-            "valores": ", ".join(f"{v:.2f}" for v in grupo[col])
+            "disponivel": True,
+            "média": valores_validos.mean(),
+            "mínimo": valores_validos.min(),
+            "máximo": valores_validos.max(),
+            "valores": ", ".join(f"{v:.2f}" for v in valores_validos)
         }
 
     def heart_rate_stats(grupo):
-        all_rates = [rate for sublist in grupo["HeartRate"] for rate in sublist]
-        por_dia = [f"[{', '.join(str(r) for r in rates)}]" for rates in grupo["HeartRate"]]
+        all_rates = [rate for sublist in grupo["HeartRate"] for rate in sublist if rate != 0]
+        por_dia = [f"[{', '.join(str(r) for r in rates if r != 0)}]" for rates in grupo["HeartRate"]]
+
+        if not all_rates:
+            return {"disponivel": False}
+
         return {
-            "média": sum(all_rates) / len(all_rates) if all_rates else 0,
-            "mínimo": min(all_rates) if all_rates else 0,
-            "máximo": max(all_rates) if all_rates else 0,
+            "disponivel": True,
+            "média": sum(all_rates) / len(all_rates),
+            "mínimo": min(all_rates),
+            "máximo": max(all_rates),
             "valores": ", ".join(por_dia)
         }
 
@@ -51,54 +78,70 @@ def gerar_descricao(grupo):
     Peso médio: {peso_médio:.2f} kg
 
     Passos:
+    {f'''
     - Média: {s("Steps")["média"]:.0f}
     - Mínimo: {s("Steps")["mínimo"]}
     - Máximo: {s("Steps")["máximo"]}
     - Valores diários: {s("Steps")["valores"]}
+    ''' if s("Steps")["disponivel"] else 'Leitura não realizada no período.'}
 
     Calorias:
+    {f'''
     - Média: {s("Calories")["média"]:.0f} cal
     - Mínimo: {s("Calories")["mínimo"]} cal
     - Máximo: {s("Calories")["máximo"]} cal
     - Valores diários: {s("Calories")["valores"]}
+    ''' if s("Calories")["disponivel"] else 'Leitura não realizada no período.'}
 
     Batimentos Cardíacos:
+    {f'''
     - Média: {hr["média"]:.0f} bpm
     - Mínimo: {hr["mínimo"]} bpm
     - Máximo: {hr["máximo"]} bpm
     - Valores diários: {hr["valores"]}
+    ''' if hr["disponivel"] else 'Leitura não realizada no período.'}
 
     Sono (valores em horas):
 
     Sono Leve:
+    {f'''
     - Média: {s("LightSleep")["média"]:.2f} h
     - Mínimo: {s("LightSleep")["mínimo"]:.2f} h
     - Máximo: {s("LightSleep")["máximo"]:.2f} h
     - Valores diários: {s("LightSleep")["valores"]}
+    ''' if s("LightSleep")["disponivel"] else 'Leitura não realizada no período.'}
 
     Sono Profundo:
+    {f'''
     - Média: {s("DeepSleep")["média"]:.2f} h
     - Mínimo: {s("DeepSleep")["mínimo"]:.2f} h
     - Máximo: {s("DeepSleep")["máximo"]:.2f} h
     - Valores diários: {s("DeepSleep")["valores"]}
+    ''' if s("DeepSleep")["disponivel"] else 'Leitura não realizada no período.'}
 
     Sono REM:
+    {f'''
     - Média: {s("REMSleep")["média"]:.2f} h
     - Mínimo: {s("REMSleep")["mínimo"]:.2f} h
     - Máximo: {s("REMSleep")["máximo"]:.2f} h
     - Valores diários: {s("REMSleep")["valores"]}
+    ''' if s("REMSleep")["disponivel"] else 'Leitura não realizada no período.'}
 
     Tempo Acordado:
+    {f'''
     - Média: {s("AwakeSleep")["média"]:.2f} h
     - Mínimo: {s("AwakeSleep")["mínimo"]:.2f} h
     - Máximo: {s("AwakeSleep")["máximo"]:.2f} h
     - Valores diários: {s("AwakeSleep")["valores"]}
+    ''' if s("AwakeSleep")["disponivel"] else 'Leitura não realizada no período.'}
 
     Tempo Total de Sono:
+    {f'''
     - Média: {s("TotalSleep")["média"]:.2f} h
     - Mínimo: {s("TotalSleep")["mínimo"]:.2f} h
     - Máximo: {s("TotalSleep")["máximo"]:.2f} h
     - Valores diários: {s("TotalSleep")["valores"]}
+    ''' if s("TotalSleep")["disponivel"] else 'Leitura não realizada no período.'}
 
     Fim do relatório do paciente {id} para o período de {data_inicial} a {data_final}.
     """.strip()
@@ -126,4 +169,6 @@ for pid, grupo_paciente in df.groupby("patient_id"):
         inicio += timedelta(days=7)
 
 df_resultado = pd.DataFrame(resultados)
-df_resultado.to_csv("processed/patients_register_documents.csv", index=False)
+df_resultado.to_csv("data/processed/patients_register_documents.csv", index=False)
+
+print("Arquivo de pacientes processado e salvo!")
